@@ -1,0 +1,40 @@
+services:
+
+  redpanda:
+    image: redpandadata/redpanda:v25.3.6
+    container_name: dq-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://localhost:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+
+  postgres:
+    image: postgres:17
+    container_name: dq-postgres
+    environment:
+      POSTGRES_DB: data_quality
+      POSTGRES_USER: dq_user
+      POSTGRES_PASSWORD: dq_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
