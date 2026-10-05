@@ -2,7 +2,9 @@ import json
 
 from confluent_kafka import Consumer, KafkaException, Producer
 
+from services.dq.rule_repository import get_enabled_rules
 from services.dq.validator import validate_transaction
+from services.dq.result_repository import save_dq_results
 
 
 KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
@@ -54,7 +56,10 @@ def main():
 
     consumer.subscribe([INPUT_TOPIC])
 
+    rules = get_enabled_rules("transactions")
+
     print(f"Listening to {INPUT_TOPIC}")
+    print(f"Loaded {len(rules)} DQ rules")
 
     try:
 
@@ -99,9 +104,18 @@ def main():
 
                 continue
 
-            errors = validate_transaction(event)
+            errors = validate_transaction(event, rules)
 
             if errors:
+
+                save_dq_results(
+                    event=event,
+                    dataset_name="transactions",
+                    validation_errors=errors,
+                    source_topic=msg.topic(),
+                    source_partition=msg.partition(),
+                    source_offset=msg.offset(),
+                )
 
                 dlq_event = {
                     "original_event": event,

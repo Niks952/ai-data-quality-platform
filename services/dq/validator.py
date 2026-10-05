@@ -1,19 +1,13 @@
 from typing import Any
+from datetime import datetime
 
 
-REQUIRED_FIELDS = {
-    "event_id": str,
-    "customer_id": str,
-    "amount": (int, float),
-    "currency": str,
-    "transaction_type": str,
-    "event_timestamp": str,
-}
-
-
-def validate_transaction(event: dict[str, Any]) -> list[dict[str, Any]]:
+def validate_transaction(
+    event: dict[str, Any],
+    rules: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
-    Validate a transaction event.
+    Validate an event using rules loaded from PostgreSQL.
 
     Returns a list of validation errors.
     An empty list means the event is valid.
@@ -21,82 +15,119 @@ def validate_transaction(event: dict[str, Any]) -> list[dict[str, Any]]:
 
     errors = []
 
-    # Schema / required field checks
-    for field, expected_type in REQUIRED_FIELDS.items():
+    for rule in rules:
 
-        if field not in event:
-            errors.append(
-                {
-                    "rule": "REQUIRED_FIELD",
-                    "field": field,
-                    "message": f"Missing required field: {field}",
-                }
-            )
+        if not rule["enabled"]:
             continue
 
-        value = event[field]
+        rule_id = rule["rule_id"]
+        rule_type = rule["rule_type"]
+        column_name = rule["column_name"]
+        rule_config = rule["rule_config"]
 
-        if value is None:
+        value = event.get(column_name)
+
+        if rule_type == "NOT_NULL":
+
+            if column_name not in event or value is None:
+
+                errors.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule": rule_type,
+                        "field": column_name,
+                        "message": (
+                            f"Field cannot be null: {column_name}"
+                        ),
+                    }
+                )
+
+        elif rule_type == "RANGE":
+
+            if value is None:
+                continue
+
+            minimum = rule_config.get("min")
+            maximum = rule_config.get("max")
+
+            if minimum is not None and value < minimum:
+
+                errors.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule": rule_type,
+                        "field": column_name,
+                        "message": (
+                            f"{column_name} must be greater than "
+                            f"or equal to {minimum}"
+                        ),
+                    }
+                )
+
+            if maximum is not None and value > maximum:
+
+                errors.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule": rule_type,
+                        "field": column_name,
+                        "message": (
+                            f"{column_name} must be less than "
+                            f"or equal to {maximum}"
+                        ),
+                    }
+                )
+        
+        elif rule_type == "DATETIME":
+            
+            if value is None:
+                continue
+
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                errors.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule": rule_type,
+                        "field": column_name,
+                        "message": (
+                            f"Invalid datetime value for "
+                            f"{column_name}: {value}"
+                        ),
+                    }
+                )
+
+        elif rule_type == "ENUM":
+
+            if value is None:
+                continue
+
+            allowed_values = rule_config.get("allowed", [])
+
+            if value not in allowed_values:
+
+                errors.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule": rule_type,
+                        "field": column_name,
+                        "message": (
+                            f"Invalid value for {column_name}: {value}. "
+                            f"Allowed values: {allowed_values}"
+                        ),
+                    }
+                )
+
+        else:
+
             errors.append(
                 {
-                    "rule": "NULL_CHECK",
-                    "field": field,
-                    "message": f"Field cannot be null: {field}",
-                }
-            )
-            continue
-
-        if not isinstance(value, expected_type):
-            errors.append(
-                {
-                    "rule": "DATA_TYPE",
-                    "field": field,
+                    "rule_id": rule_id,
+                    "rule": "UNKNOWN_RULE",
+                    "field": column_name,
                     "message": (
-                        f"Invalid type for {field}. "
-                        f"Expected {expected_type}, "
-                        f"got {type(value).__name__}"
-                    ),
-                }
-            )
-
-    # Business rules
-    if "amount" in event and isinstance(event["amount"], (int, float)):
-        if event["amount"] <= 0:
-            errors.append(
-                {
-                    "rule": "POSITIVE_AMOUNT",
-                    "field": "amount",
-                    "message": "Transaction amount must be greater than zero",
-                }
-            )
-
-    if "currency" in event and event["currency"] is not None:
-        allowed_currencies = {"USD", "EUR", "GBP", "INR"}
-
-        if event["currency"] not in allowed_currencies:
-            errors.append(
-                {
-                    "rule": "VALID_CURRENCY",
-                    "field": "currency",
-                    "message": f"Unsupported currency: {event['currency']}",
-                }
-            )
-
-    if "transaction_type" in event and event["transaction_type"] is not None:
-        allowed_types = {
-            "PURCHASE",
-            "REFUND",
-            "TRANSFER",
-        }
-
-        if event["transaction_type"] not in allowed_types:
-            errors.append(
-                {
-                    "rule": "VALID_TRANSACTION_TYPE",
-                    "field": "transaction_type",
-                    "message": (
-                        f"Unsupported transaction type: "
-                        f"{event['transaction_type']}"
+                        f"Unsupported rule type: {rule_type}"
                     ),
                 }
             )
